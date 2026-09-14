@@ -3,6 +3,9 @@ use thiserror::Error;
 
 mod geoid;
 
+#[cfg(test)]
+mod tests;
+
 /// Errors indicate what went wrong calculating the geoid height.
 #[derive(Error, Debug, PartialEq)]
 pub enum Error {
@@ -53,6 +56,7 @@ pub fn geoid_height(latitude: f32, longitude: f32) -> Result<f32, Error> {
 }
 
 /// Latitude holds an f32 representing a WGS-84 latitude in degrees.
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Latitude(f32);
 
 impl Latitude {
@@ -77,7 +81,7 @@ impl Latitude {
     fn bounding_bands(&self) -> (usize, usize) {
         let lat = self.translate_and_scale();
         let low = lat.floor() as usize;
-        let high = (low + 1).clamp(0, BAND_COUNT - 1);
+        let high = (low + 1).min(BAND_COUNT - 1);
         (low, high)
     }
 
@@ -93,11 +97,12 @@ impl Latitude {
     }
 }
 
-/// Latitude holds an f32 representing a WGS-84 longitude in degrees.
+/// Longitude holds an f32 representing a WGS-84 longitude in degrees.
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct Longitude(f32);
 
 impl Longitude {
-    /// Create a new Longitude from the given f32, returning `Error::Longitude` if the
+    /// Create a new Longitude from the given f32, returning `Error::LongitudeOutOfRange` if the
     /// provided value is not between -180 and 180.
     fn new(longitude: f32) -> Result<Self, Error> {
         match longitude {
@@ -118,7 +123,7 @@ impl Longitude {
     fn bounding_offsets(&self) -> (usize, usize) {
         let lon = self.translate_and_scale();
         let low = lon.floor() as usize;
-        let high = (low + 1).clamp(0, BAND_SIZE - 1);
+        let high = (low + 1).min(BAND_SIZE - 1);
         (low, high)
     }
 
@@ -152,96 +157,4 @@ fn lookup_height(band: usize, offset: usize) -> f32 {
 /// of the way between 5 and 10, will be 1.2 (a value 20% of the way between 1 and 2).
 fn interpolate(a: f32, b: f32, proportion: f32) -> f32 {
     a + ((b - a) * proportion)
-}
-
-#[cfg(test)]
-mod tests {
-    use crate::{geoid_height, interpolate, Error};
-
-    #[test]
-    fn test_interpolate() {
-        assert_eq!(interpolate(0.0, 100.0, 0.5), 50.0);
-        assert_eq!(interpolate(100.0, 0.0, 0.5), 50.0);
-        assert_eq!(interpolate(0.0, 0.0, 0.5), 0.0);
-        assert_eq!(interpolate(5.0, 10.0, 0.2), 6.0);
-    }
-
-    #[test]
-    fn fuzz_inputs() {
-        let mut latitude = -90.0;
-        while latitude <= 90.0 {
-            let mut longitude = -180.0;
-            while longitude <= 180.0 {
-                assert!(
-                    geoid_height(latitude, longitude).is_ok(),
-                    "geoid_height({}, {}) caused a crash",
-                    latitude,
-                    longitude
-                );
-                longitude += 0.09;
-            }
-            latitude += 0.11;
-        }
-    }
-
-    #[test]
-    fn test_one_invalid_input() {
-        let tests = [
-            (-91.0, 0.0, Error::LatitudeOutOfRange),
-            (91.0, 0.0, Error::LatitudeOutOfRange),
-            (0.0, -181.0, Error::LongitudeOutOfRange),
-            (0.0, 181.0, Error::LongitudeOutOfRange),
-        ];
-        for (lat, lon, expected) in tests {
-            let result = geoid_height(lat, lon);
-            assert!(
-                result.is_err(),
-                "Expected an error computing height for ({}, {})",
-                lat,
-                lon
-            );
-            if let Err(actual) = result {
-                assert_eq!(expected, actual, "Got a different error than expected");
-            }
-        }
-    }
-
-    #[test]
-    fn test_two_invalid_inputs() {
-        assert!(geoid_height(-95.0, -200.0).is_err());
-    }
-
-    #[test]
-    fn validate_known_points() {
-        let tests = [
-            (-90.0, -180.0, -30.15),
-            (-90.0, 0.0, -30.15),
-            (-90.0, 180.0, -30.15),
-            (0.0, -180.0, 21.281),
-            (0.0, 0.0, 17.225),
-            (0.0, 180.0, 21.281),
-            (90.0, -180.0, 14.899),
-            (90.0, 0.0, 14.899),
-            (90.0, 180.0, 14.899),
-            (-81.0, -135.0, -45.184),
-            (72.0, 141.0, -1.603),
-            (-87.0, 49.5, -17.6775),
-        ];
-        for (lat, lon, expected) in tests {
-            let result = geoid_height(lat, lon);
-            assert!(
-                result.is_ok(),
-                "could not calculate geoid height at ({}, {})",
-                lat,
-                lon
-            );
-            if let Ok(actual) = result {
-                assert_eq!(
-                    actual, expected,
-                    "got unexpected height at ({}, {})",
-                    lat, lon
-                );
-            }
-        }
-    }
 }
